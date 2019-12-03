@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
 from scrapy.exceptions import DropItem
-from work_utils.filter_fact import filter_factory
 from ubaike_project.work_utils.filter_fact import filter_factory
 import pymongo
 import redis
@@ -10,7 +9,6 @@ from twisted.enterprise import adbapi
 import json
 from ubaike_project.utils.mysql_common import MysqlClient
 from ubaike_project.utils.elasticsearch_common import ESClient
-from work_utils.creat_mysql_data import Base,engine
 from ubaike_project.work_utils.creat_mysql_data import Base, engine
 from ubaike_project import settings
 import logging
@@ -289,35 +287,3 @@ class UpdateDataToEs(object):
 
     def close_spider(self,spider):
         pass
-
-
-class RedisPipeline(object):
-    """
-    存储到redis
-    """
-    def __init__(self, redis_host, redis_port, redis_db, redis_password):
-        self.pool = redis.ConnectionPool(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
-        self.client = redis.Redis(connection_pool=self.pool, decode_responses=True)
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        return cls(
-            redis_host=crawler.settings.get('REDIS_HOST'),
-            redis_port=crawler.settings.get('REDIS_PORT'),
-            redis_db=crawler.settings.get('REDIS_DB'),
-            redis_password=crawler.settings.get('REDIS_PASSWORD'),
-        )
-
-    def close_spider(self, spider):
-        self.client.close()
-
-    def process_item(self, item, spider):
-        self.insert_item(item)
-        return item
-
-    def insert_item(self, item):
-        if isinstance(item, dict):
-            results = item.get('name')
-            for i in results:
-                # self.client.rpush('court:name', i)  # 存list
-                self.client.sadd('court:name', i)  # 存集合，去重

@@ -88,7 +88,6 @@ REDIS_PARAMS = {
     "password": "",
     "db": 3,
 }
-SPIDER_ERRROR_URLS = "ubaike:crawl_error_urls"
 
 # --------------elasticsearch连接配置-----------------#
 ES_HOST = '127.0.0.1'

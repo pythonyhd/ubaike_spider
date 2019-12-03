@@ -77,64 +77,20 @@ class RandomProxiesMiddlerware(object):
     def process_request(self, request, spider):
         ip_port = self.redis_client.srandmember('proxies')
         proxies = {
-            'http:': 'http://{}'.format(ip_port.decode('utf-8')),
-            'https:': 'https://{}'.format(ip_port.decode('utf-8')),
+            'http': 'http://{}'.format(ip_port.decode('utf-8')),
+            'https': 'https://{}'.format(ip_port.decode('utf-8')),
         }
         if request.url.startswith('http://'):
-            request.meta['proxy'] = proxies.get('http:')
+            request.meta['proxy'] = proxies.get('http')
             # logger.debug('http链接,ip:{}'.format(request.meta.get('proxy')))
         else:
-            request.meta['proxy'] = proxies.get('https:')
+            request.meta['proxy'] = proxies.get('https')
             # logger.debug('https链接,ip:{}'.format(request.meta.get('proxy')))
 
     def process_response(self, request, response, spider):
         if response.url == 'https://www.ubaike.cn/book.html':
             return request
         return response
-
-    def process_exception(self, request, exception, spider):
-        # print("格式化后的对象:{}".format(repr(exception)))
-        if "ConnectionRefusedError" in repr(exception):
-            proxy = request.meta.get("proxy")
-            if proxy:
-                proxy = proxy.split("//")[1]
-                self.delete_proxy(proxy)
-                logger.info("目标计算机积极拒绝,删除代理 - {} - 请求的url - {}".format(proxy, request.url))
-            return request
-
-        elif "TCPTimedOutError" in repr(exception):
-            proxy = request.meta.get('proxy')
-            if proxy:
-                proxy = proxy.split('//')[1]
-                self.delete_proxy(proxy)
-                logger.info("连接方在一段时间后没有正确答复或连接的主机没有反应,删除代理 - {} - 请求的url - {}".format(proxy, request.url))
-                return request
-
-        elif "TimeoutError" in repr(exception):
-            logger.info("下载超时,返回重新下载,url:{}".format(request.url))
-            return request
-
-
-class RandomProxyUserPwdMiddlerware(object):
-    """
-    带账号密码的代理IP
-    """
-    user_pwd_ip_list = [
-            '139.198.4.42:444444',
-    ]
-
-    def process_request(self, request, spider):
-        proxy = {'ip_port': random.choice(self.user_pwd_ip_list), 'user_pass': 'username:password'}
-        if request.url.startswith('http://'):
-            request.meta['proxy'] = "http://{}".format(proxy.get('ip_port'))
-            encoded_user_pass = base64.b64encode(proxy.get('user_pass').encode('utf-8'))
-            request.headers['Proxy-Authorization'] = 'Basic ' + encoded_user_pass.decode()
-            logger.debug('http链接,ip:{}'.format(request.meta.get('proxy')))
-        else:
-            request.meta['proxy'] = "https://{}".format(proxy.get('ip_port'))
-            encoded_user_pass = base64.b64encode(proxy.get('user_pass').encode('utf-8'))
-            request.headers['Proxy-Authorization'] = 'Basic ' + encoded_user_pass.decode()
-            logger.debug('https链接,ip:{}'.format(request.meta.get('proxy')))
 
 
 class LocalRetryMiddlerware(RetryMiddleware):
@@ -154,7 +110,7 @@ class LocalRetryMiddlerware(RetryMiddleware):
         db=settings.REDIS_DB,
     )
 
-    def del_proxy(self, proxy):
+    def delete_proxy(self, proxy):
         """
         删除代理
         """
@@ -167,7 +123,7 @@ class LocalRetryMiddlerware(RetryMiddleware):
             if proxy:
                proxy = proxy.split("//")[1]
                logger.info("{} - 响应码是302或者403删除代理 - {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), proxy))
-               self.del_proxy(proxy)
+               self.delete_proxy(proxy)
             reason = response_status_message(response.status)
             return self._retry(request, reason, spider) or response
 
@@ -208,10 +164,39 @@ class LocalRetryMiddlerware(RetryMiddleware):
             return retryreq
         else:
             # 全部重试错误，要保存错误的url和参数 - start
-            error_request = settings.SPIDER_ERRROR_URLS
+            error_request = spider.name + 'error_urls'
             self.redis_client.sadd(error_request, request.url)
             # 全部重试错误，要保存错误的url和参数 - en
             stats.inc_value('retry/max_reached')
             logger.debug("Gave up retrying %(request)s (failed %(retries)d times): %(reason)s",
                          {'request': request, 'retries': retries, 'reason': reason},
                          extra={'spider': spider})
+
+    def process_exception(self, request, exception, spider):
+        if "ConnectionRefusedError" in repr(exception):
+            proxy_spider = request.meta.get('proxy')
+            proxy_redis = proxy_spider.split("//")[1]
+            self.delete_proxy(proxy_redis)
+            logger.info('目标计算机积极拒绝，删除代理-{}-请求url-{}-重新请求'.format(proxy_redis, request.url))
+            return request
+
+        elif "TCPTimedOutError" in repr(exception):
+            logger.debug('连接方在一段时间后没有正确答复或连接的主机没有反应')
+            return request
+
+        elif "ConnectionError" in repr(exception):
+            logger.debug("连接出错，无网络")
+            return request
+
+        elif "TimeoutError" in repr(exception):
+            logger.debug('请求超时-请求url-{}-重新请求'.format(request.url))
+            return request
+
+        elif "ConnectionResetError" in repr(exception):
+            logger.debug('远程主机强迫关闭了一个现有的连接')
+            return request
+
+        elif "ResponseNeverReceived" in repr(exception):
+            return request
+        else:
+            logger.error('出现其他异常:{}--等待处理'.format(repr(exception)))
